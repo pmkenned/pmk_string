@@ -118,7 +118,6 @@ int     builder_read_file_fixed     (StringBuilder * builder, const char * filen
 #include <limits.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #ifndef PMK_REALLOC
 #include <stdlib.h>
