@@ -8,7 +8,7 @@ tested.
 To get started, add `pmk_string.h` to your project and add the following two
 lines to exactly one of your translation units:
 
-```
+```c
 #define PMK_STRING_IMPL
 #include "pmk_string.h"
 ```
@@ -20,7 +20,7 @@ All other files which use the library must have only the `#include`.
 This library is meant to be very minimal. It provides two data types defined
 like so:
 
-```
+```c
 typedef struct {
     char * data;
     size_t len;
@@ -50,7 +50,7 @@ nul-terminated as the functions which operate on them ensure this.
 The following is a complete program which uses the `String` type to refer to a
 string literal and print it using `printf()`:
 
-```
+```c
 // Example 1
 #define PMK_STRING_IMPL
 #include "pmk_string.h"
@@ -77,7 +77,7 @@ using the `%.*s` format specifier and `len_data` macro.
 
 The next example shows how to use the `StringBuilder` type:
 
-```
+```c
 // Example 2
 void string_builder_example()
 {
@@ -126,7 +126,7 @@ allocations.
 To initialize a `StringBuilder` to use a fixed-sized buffer, use the
 `builder_from_fixed()` macro as in Example 3 below.
 
-```
+```c
 // Example 3
 void string_builder_fixed_example()
 {
@@ -179,7 +179,7 @@ you can replace this function by defining `PMK_REALLOC`. For example, if
 `my_realloc()` is a function with the same signature as `realloc`, you can use
 this allocator like so:
 
-```
+```c
 #define PMK_REALLOC(context, pointer, size) my_realloc(pointer, size)
 ```
 
@@ -190,7 +190,7 @@ should have no problem.
 But if your allocator needs additional information to perform allocations, then
 you must pass this pointer to your allocator:
 
-```
+```c
 #define PMK_REALLOC(context, pointer, size) my_realloc(context, pointer, size)
 ```
 
