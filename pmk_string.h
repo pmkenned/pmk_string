@@ -1,42 +1,227 @@
+/* pmk_string.h
+
+This library is meant to be an extremely simple and easy-to-use string library
+for C programs. It consists entirely of this one file.
+
+To use this library, do this in *one* C file:
+    #define PMK_STRING_IMPL
+    #include "pmk_string.h"
+
+This library uses two types: String and StringBuilder.
+
+The String type comprises a pointer to the data and a length. This type is
+applicable when you simply want to refer to a specific sequence of bytes making
+up a string. This data may be nul-terminated or not; it may overlap with other
+strings or not; it may exist on the stack, the heap, BSS or data segment; it
+may be read-only or read-write. The String data type doesn't tell you anything
+other than that a sequence of len bytes beginning at the address pointed to by
+data make up a string.
+
+The StringBuilder type has a capacity in addition to the data pointer and
+length. This type is applicable when you have a buffer with a specific capacity
+which may be filled with bytes making up a string. The buffer may be fixed-size
+or resizable. Generally, the contents can be assumed to be nul-terminated as
+the functions which operate on them ensure this.
+
+In general, if you need to concatenate strings or perform other operations
+which may require memory allocation such as search and replace, you'll be using
+the StringBuilder type and its associated functions. But if you just want to
+refer to a read-only string or divide a string into substrings or make changes
+which do not require allocation such as changing capitalization or replacing
+all occurrences of one character with another, you'll be using the String type
+and its functions.
+
+## String Type
+
+Here's an example of creating a String and initializing it to refer to a
+read-only string:
+
+    String name = { .data = "Paul", .len = 4 };
+
+Obviously, it would be tedious and error-prone to have to manually count the
+number of characters in the string literal. The str_lit macro does this for
+you:
+
+    String name = str_lit("Paul");
+
+To print the string using printf, use the %.*s format specifier which expects
+an int specifying the number of bytes in the string and a pointer to the
+string:
+
+    printf("%.*s\n", (int) name.len, name.data);
+
+The len_data macro can be used to save typing:
+
+    printf("%.*s\n", len_data(name));
+
+Because string literals are automatically nul-terminated by the C compiler, we
+could have printed the string like so:
+
+    printf("%s\n", name.data);
+
+But keep in mind that a String does not need to be nul-terminated, so this
+should generally be avoided.
+
+The fact that Strings do not have to be nul-terminated allows us to take
+substrings very easily without doing any allocations. For example:
+
+    String full_name  = str_lit("Paul Kennedy");
+    String first_name = string_substr(full_name, 0, 4);
+    String last_name  = string_substr(full_name, 5, 12);
+    printf("First name: %.*s\n", len_data(first_name));
+    printf("Last name: %.*s\n", len_data(last_name));
+
+That's most of what you need to know about strings. For the most part, the
+functions which operate on strings do not do any allocations with the exception
+of string_dup(). Some of the functions modify the strings, such as
+string_toupper(), but most of them simply compute some function of the input
+string(s) with no side-effects, such as string_equal().
+
+Note that some functions such as string_trim() sound like they modify the input
+string but actually do not; string_trim() returns a substring of the input
+string. To trim a string, it is necessary to capture the result:
+
+    name = string_trim(name);
+
+The set of functions has been loosely based on the string functions in the C
+standard library with some omissions such as strlen() (which of course is
+superfluous) and some additions such as string_starts_with(). Some functions
+have been given different names from their C standard library counterparts,
+such as string_find() which is analogous to strstr().
+
+There are also some differences in functionality. For example, strchr() returns
+a char *, and if the given character isn't found in the string, it returns
+NULL, whereas string_char() returns a size_t indicating how far into the string
+the character is found, and returns string.len if the character isn't found.
+
+## StringBuilder Type
+
+Here is an example of how you would use the StringBuilder type:
+
+    StringBuilder builder = {0};
+    builder_print(&builder, "My name is %s. I am %d years old.", "Paul", 33);
+    printf("%.*s\n", len_data(builder));
+
+Note the initialization of builder to {0}. This is important. Passing an
+unitialized StringBuilder to any of the builder functions is undefined.
+
+In general, the builder functions will dynamically allocate memory for the
+StringBuilder as necessary. They will also nul-terminate the buffer for
+convenience.
+
+If you just want to append a String and don't need format specifiers, you can
+use builder_append():
+
+    String name = str_lit("Paul");
+    builder_append(&builder, name);
+
+You can easily create a String from a StringBuilder using the
+builder_to_string macro.
+
+    String bs = builder_to_string(builder);
+
+This can be convenient if you want to pass the StringBuilder to one of the
+String functions. For example:
+
+    size_t line_count = string_count(bs, '\n');
+
+But be aware that if you then perform an operation on the StringBuilder which
+requires reallocation, the String will no longer point to valid data.
+
+In general, when adding to a StringBuilder, if the current capacity is
+insufficient, the buffer will be doubled in size. In case doubling is not
+enough, it will be expanded just enough to fit.
+
+If you have some idea of how much memory you are likely to need, you can use
+builder_reserve() to reserve a specific amount memory ahead of time to reduce
+the number of reallocations:
+
+    StringBuilder builder = {0};
+    builder = builder_reserve(&builder, 1 << 12); // 4 KiB
+
+To deallocate, call builder_destroy():
+
+    builder_destroy(&builder);
+
+This will deallocate the buffer and reinitialize to {0}, making it safe to
+reuse.
+
+If you wish to reuse a StringBuilder with its currently allocated buffer, you
+can simply set the len field to 0:
+
+    builder_print(&builder, "%s %d\n", "hello", 123);
+    builder.len = 0;
+    builder_print(&builder, "%s %d\n", "goodbyte", 456);
+
+As previously mentioned, the buffer for a StringBuilder does not have to be
+dynamically allocated. It can be a fixed-sized buffer located on the stack,
+BSS, or data segment. To use a fixed-sized buffer, however, you must use the
+corresponding functions which all end with _fixed.
+
+These functions work the same as their dynamic counterparts except that if the
+buffer space is insufficient, they simply truncate and return an error.
+
+Here is an example of how you would use a StringBuilder with a fixed-sized
+buffer:
+
+    char buffer[1024];
+    StringBuilder builder = builder_from_fixed(buffer);
+    builder_print_fixed(&builder, "%s %d\n", "hello", 123);
+
+In addition to the functions mentioned so far, there are functions for
+replacing substrings, splicing, reading lines of input from a stream and
+reading files.
+
+## Error Handling
+
+For the most part, functions which can indicate errors do so by returning
+`-errno`.  This makes it easy to check for errors: simply check `f() < 0`.
+
+Note that better error handling is on the TODO list. Currently, some functions
+terminate the program on certain kinds of errors or return positive numbers for
+errors or just return -1.
+
+## Dynamic Memory Allocation
+
+This library is meant to be versatile when it comes to dynamic memory
+allocation. This is accomplished with the following two features:
+
+- Replacing the default allocator through a preprocessor macro
+- Use of the *_context() functions which accept a void * as their first
+  parameter to pass arbitrary data to the allocator
+
+By default, functions needing dynamic memory allocation will use realloc, but
+you can replace this function by defining PMK_REALLOC. For example, if
+my_realloc() is a function with the same signature as realloc, you can use this
+allocator like so:
+
+    #define PMK_REALLOC(context, pointer, size) my_realloc(pointer, size)
+
+Notice that the context argument is discarded. This parameter is used by the
+*_context() functions. If you do not use these functions, you should have no
+problem.
+
+But if your allocator needs additional information to perform allocations, then
+you must pass this pointer to your allocator:
+
+    #define PMK_REALLOC(context, pointer, size) my_realloc(context, pointer, size)
+
+The file pmk_arena.h has been included to show an example of overriding the
+default allocator with a simple arena allocator. See examples.c.
+
+## Known Issues
+
+- Naming: function names collide with reserved namespaces
+- Error handling: functions are inconsistent with respect to how they indicate
+  and handle errors
+- Unicode: Nothing special has been done to support unicode
+- Portability: Makes use of POSIX API
+- OOM: does not attempt to detect or handle out-of-memory
+
+*/
+
 #ifndef PMK_STRING_H
 #define PMK_STRING_H
-
-/*
- * TODO:
- *
- *  - Document the API more
- *
- *  - Consider adding PMK_NO_SHORT_NAMES macro to help avoid name collisions.
- *
- *  - Consider using _Generic to allow for either String or char * for
- *    functions such as builder_append()
- *
- *  - Something similar to scscatrepr
- *
- *  - Certain functions such as string_substr() currently take start and end as
- *    parameters. Perhaps this should be start and length? Also, they allow
- *    start and end to be negative in which case they count from the end of the
- *    string, but this probably isn't as useful as it is in Python, say, where
- *    you can omit the end parameter to indicate that you want to include from
- *    start to the end of the string, e.g. s[-2:]. In our case, the best we could
- *    do would be s[-2:-1] which would leave off the last character.
- *
- *  - string_find() returns the index of the substring being searched for, but
- *    it might be preferable to return a pointer?
- *
- *  - Decide best way to handle and/or indicate errors. However it is done, it
- *    should be made consistent across all the functions. Perhaps the best way is
- *    to return -errno. That way, you can always just do if (f() < 0) to check
- *    for errors and you can just use perror() or strerror() to print a helpful
- *    error message.
- *
- *  - Decide if a more versatile way to control allocations is needed. Right
- *    now, there are only two ways to control it: defining PMK_REALLOC and
- *    passing a context pointer. That may or may not be sufficient.
- *
- *  - Consider adding flag to StringBuilder saying if buffer is dynamically
- *    allocated or not. Could maybe eliminate the _fixed functions.
- */
 
 #include <stddef.h>
 #include <stdio.h>
@@ -46,8 +231,8 @@ typedef struct {
     size_t len;
 } String;
 
-#define str_lit_const(S)                 { .data = (S), .len = sizeof(S)-1 }
 #define str_lit(S)              (String) { .data = (S), .len = sizeof(S)-1 }
+#define str_lit_const(S)                 { .data = (S), .len = sizeof(S)-1 }
 #define str_cstr(S)             (String) { .data = (S), .len = strlen(S)   }
 #define len_data_lit(S)         (int) sizeof(S)-1, (S)
 #define len_data(S)             (int) (S).len, (S).data
@@ -85,6 +270,7 @@ typedef struct {
 #define builder_from_fixed(F)   (StringBuilder) { .data = (F), .cap = sizeof(F) }
 
 #define builder_reserve(B,CAP)      builder_reserve_context     (NULL, B, CAP)
+#define builder_destroy(B,CAP)      builder_destroy_context     (NULL, B)
 #define builder_append(B,STR)       builder_append_context      (NULL, B, STR)
 #define builder_print(B,FMT,...)    builder_print_context       (NULL, B, FMT, __VA_ARGS__)
 #define builder_replace(B,X,Y)      builder_replace_context     (NULL, B, X, Y)
@@ -93,6 +279,7 @@ typedef struct {
 #define builder_read_file(B,F)      builder_read_file_context   (NULL, B, F)
 
 void    builder_reserve_context     (void * context, StringBuilder * builder, size_t cap);
+void    builder_destroy_context     (void * context, StringBuilder * builder);
 void    builder_append_context      (void * context, StringBuilder * builder, String string);
 void    builder_print_context       (void * context, StringBuilder * builder, const char * fmt, ...);
 void    builder_replace_context     (void * context, StringBuilder * builder, String x, String y);
@@ -411,6 +598,13 @@ builder_reserve_context(void * context, StringBuilder * builder, size_t cap)
         return;
     builder->cap = cap;
     builder->data = PMK_REALLOC(context, builder->data, cap);
+}
+
+void
+builder_destroy_context(void * context, StringBuilder * builder)
+{
+    PMK_FREE(context, builder->data);
+    *builder = (StringBuilder) {0};
 }
 
 // adds nul terminator
@@ -1000,3 +1194,27 @@ pmk_string_test()
 #endif /* PMK_STRING_IMPL */
 
 #endif /* PMK_STRING_H */
+
+/*
+MIT License
+
+Copyright (c) 2023 Paul Kennedy
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
