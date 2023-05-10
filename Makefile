@@ -13,7 +13,7 @@ run: ./build/$(PROG)
 
 test: CFLAGS += -DPMK_STRING_TEST
 test: ./build/$(TEST)
-	./build/$(TEST)
+	echo test 20 | ./build/$(TEST)
 
 clean:
 	rm -rf build
