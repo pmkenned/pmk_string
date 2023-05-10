@@ -506,7 +506,8 @@ builder_read_file_fixed(StringBuilder * builder, const char * filename)
     if ((size_t) (sb.st_size) > builder->cap)
         return -(errno = ENOBUFS);
 
-    fread(builder->data, 1, builder->cap, fp);
+    if (fread(builder->data, 1, builder->cap, fp) != builder->cap)
+        return -ENODATA;
 
     if (ferror(fp))
         return -errno;
@@ -534,8 +535,10 @@ builder_read_file_context(void * context, StringBuilder * builder, const char * 
     }
 
     builder_reserve_context(context, builder, (size_t) (sb.st_size));
-    fread(builder->data, 1, builder->cap, fp);
-
+    if (fread(builder->data, 1, builder->cap, fp) != builder->cap) {
+        perror(filename);
+        exit(EXIT_FAILURE);
+    }
     if (ferror(fp)) {
         perror(filename);
         exit(EXIT_FAILURE);

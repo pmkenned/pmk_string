@@ -207,8 +207,8 @@ int main()
     example6();
     example7();
     example8();
-    //example9();
-    //example10();
+    example9();
+    example10();
     example11();
     example12();
 
