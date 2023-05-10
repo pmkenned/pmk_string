@@ -2,8 +2,7 @@
 
 This library is meant to be an extremely simple and easy-to-use string library
 for C programs. It consists of only one file, `pmk_string.h` which should
-compile with GCC and clang using `-std=c99`. *Note*: MSVC has not yet been
-tested.
+compile with GCC, clang, and MSVC.
 
 To get started, add `pmk_string.h` to your project and add the following two
 lines to exactly one of your translation units:
@@ -14,6 +13,18 @@ lines to exactly one of your translation units:
 ```
 
 All other files which use the library must have only the `#include`.
+
+To compile and run the examples under Linux:
+
+```
+make run
+```
+
+Or on Windows using MSVC:
+
+```
+build
+```
 
 ## Overview
 
@@ -202,7 +213,6 @@ default allocator with a simple arena allocator.
 - Naming: function names collide with reserved namespaces
 - Error handling: functions are inconsistent with respect to how they indicate
   and handle errors
-- MSVC: this code has not been tested on MSVC and may not compile
 - Unicode: Nothing special has been done to support unicode
 - Portability: Makes use of POSIX API
 - OOM: does not attempt to detect or handle out-of-memory
