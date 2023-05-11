@@ -294,6 +294,8 @@ int     builder_splice_fixed        (StringBuilder * builder, int start, int end
 int     builder_getline_fixed       (StringBuilder * builder, FILE * fp);
 int     builder_read_file_fixed     (StringBuilder * builder, const char * filename);
 
+#endif /* PMK_STRING_H */
+
 #ifdef PMK_STRING_IMPL
 
 #include <stdio.h>
@@ -1192,8 +1194,6 @@ pmk_string_test()
 #undef MAX
 
 #endif /* PMK_STRING_IMPL */
-
-#endif /* PMK_STRING_H */
 
 /*
 MIT License

@@ -24,6 +24,8 @@ void *  arena_realloc       (void * ptr, size_t size);
 void    arena_destroy       (Arena * arena);
 //void    arena_free_after    (void * ptr); // TODO
 
+#endif /* PMK_ARENA_H */
+
 #ifdef PMK_ARENA_IMPL
 
 #include <stdlib.h>
@@ -40,7 +42,11 @@ void    arena_destroy       (Arena * arena);
 
 #define ALIGN_UP(X,Y) (((X) + ((Y)-1)) & ~((Y)-1))
 
-#if defined(PMK_DEBUG) && PMK_DEBUG
+#ifndef PMK_DEBUG
+#define PMK_DEBUG 0
+#endif
+
+#if PMK_DEBUG
 #define DEBUG_MSG(FMT, ...) fprintf(stderr, FMT, __VA_ARGS__)
 #else
 #define DEBUG_MSG(FMT, ...)
@@ -100,6 +106,10 @@ arena_realloc_into(Arena * arena, void * ptr, size_t size)
         memcpy(result, ptr, min_size);
     } else if (ptr && size == 0) {
         // cannot free individual allocations from an arena
+#if PMK_DEBUG
+        size_t old_size = *((size_t *) ptr - 1);
+        memset(ptr, 0xcd, old_size);
+#endif
     }
 
     //DEBUG_MSG("Allocated %zu bytes from arena at %p (buffer at %p) at %p (from %p)\n", size, arena, arena->data, result, ptr);
@@ -135,5 +145,3 @@ arena_destroy(Arena * arena)
 #undef MAX
 
 #endif /* PMK_ARENA_IMPL */
-
-#endif /* PMK_ARENA_H */
