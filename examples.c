@@ -13,6 +13,7 @@
 #include <stdlib.h>
 
 #define NELEM(X) (sizeof(X)/sizeof(X[0]))
+#define NELEMS(X) (ptrdiff_t)(sizeof(X)/sizeof(X[0]))
 
 static void
 example1()
@@ -57,7 +58,7 @@ static void
 example4()
 {
     String message = str_lit("   Hello there, \t you  .  ");
-    size_t save = 0;
+    s32 save = 0;
     String token;
     printf("Example4: [%s]\n", message.data);
     while (1) {
@@ -88,7 +89,7 @@ example5()
     qsort(animals, NELEM(animals), sizeof(animals[0]), string_compare_qsort);
 
     StringBuilder builder = {0};
-    for (size_t i = 0; i < NELEM(animals); i++) {
+    for (s32 i = 0; i < NELEMS(animals); i++) {
         if (i > 0)
             builder_append(&builder, str_lit(", "));
         builder_append(&builder, animals[i]);
@@ -174,8 +175,8 @@ example11()
     const char * filename = "README.md";
     StringBuilder builder = {0};
     builder_read_file(&builder, filename);
-    size_t line_count = string_count(builder_to_string(builder), '\n');
-    printf("Example11: there are %zu bytes and %zu lines in %s\n", builder.len, line_count, filename);
+    s32 line_count = string_count(builder_to_string(builder), '\n');
+    printf("Example11: there are %d bytes and %d lines in %s\n", builder.len, line_count, filename);
 }
 
 static void
@@ -188,8 +189,8 @@ example12()
         perror("example12()");
         exit(EXIT_FAILURE);
     }
-    size_t line_count = string_count(builder_to_string(builder), '\n');
-    printf("Example12: there are %zu bytes and %zu lines in %s\n", builder.len, line_count, filename);
+    s32 line_count = string_count(builder_to_string(builder), '\n');
+    printf("Example12: there are %d bytes and %d lines in %s\n", builder.len, line_count, filename);
 }
 
 int main()

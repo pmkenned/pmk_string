@@ -31,6 +31,17 @@ which do not require allocation such as changing capitalization or replacing
 all occurrences of one character with another, you'll be using the String type
 and its functions.
 
+IMPORTANT: String and StringBuilder both use int32_t to store the length (and
+capacity in the case of StringBuilder). This means they are limited to
+(2^31)-1, or about 2 billion bytes. Why not use size_t instead?  Primarily to
+save space. Using int32_t instead of size_t means that on a 64-bit system, a
+StringBuilder occupies 16 bytes instead of 24 bytes. Assuming a 64b cache line
+size, each cache line can store 4 StringBuilders instead of an average of 2.5.
+Why not use uint32_t and get twice the range? Because negative indices are
+useful for various things and 2 billion is plenty big enough for 99% of cases.
+If you really need longer strings, you probably want a more specialized
+library.
+
 ## String Type
 
 Here's an example of creating a String and initializing it to refer to a
@@ -91,7 +102,7 @@ such as string_find() which is analogous to strstr().
 
 There are also some differences in functionality. For example, strchr() returns
 a char *, and if the given character isn't found in the string, it returns
-NULL, whereas string_char() returns a size_t indicating how far into the string
+NULL, whereas string_char() returns an index indicating how far into the string
 the character is found, and returns string.len if the character isn't found.
 
 ## StringBuilder Type
@@ -123,7 +134,7 @@ builder_to_string macro.
 This can be convenient if you want to pass the StringBuilder to one of the
 String functions. For example:
 
-    size_t line_count = string_count(bs, '\n');
+    int32_t line_count = string_count(bs, '\n');
 
 But be aware that if you then perform an operation on the StringBuilder which
 requires reallocation, the String will no longer point to valid data.
@@ -223,12 +234,23 @@ default allocator with a simple arena allocator. See examples.c.
 #ifndef PMK_STRING_H
 #define PMK_STRING_H
 
+#include <stdint.h>
+
+typedef   int8_t s8;
+typedef  uint8_t u8;
+typedef  int16_t s16;
+typedef uint16_t u16;
+typedef  int32_t s32;
+typedef uint32_t u32;
+typedef  int64_t s64;
+typedef uint64_t u64;
+
 #include <stddef.h>
 #include <stdio.h>
 
 typedef struct {
     char * data;
-    size_t len;
+    s32 len;
 } String;
 
 #define str_lit(S)              (String) { .data = (S), .len = sizeof(S)-1 }
@@ -239,31 +261,31 @@ typedef struct {
 #define str_left_adjust(S,N)    do { (S).data += N; (S).len -= N; } while (0)
 
 int     string_equal        (String s1, String s2);
-int     string_equaln       (String s1, String s2, size_t n);
+int     string_equaln       (String s1, String s2, s32 n);
 int     string_compare      (String s1, String s2);
 int     string_compare_qsort(const void * a, const void * b);
-String  string_substr       (String string, int start, int end);
+String  string_substr       (String string, s32 start, s32 end);
 String  string_dup          (String string);
 String  string_trim         (String string);
-size_t  string_char         (String string, char c);
-size_t  string_rchar        (String string, char c);
-size_t  string_span         (String string, String accept);
-size_t  string_cspan        (String string, String reject);
-size_t  string_find         (String haystack, String needle);
+s32     string_char         (String string, char c);
+s32     string_rchar        (String string, char c);
+s32     string_span         (String string, String accept);
+s32     string_cspan        (String string, String reject);
+s32     string_find         (String haystack, String needle);
 String  string_break        (String string, String accept);
-String  string_tokenize     (String string, String delim, size_t * saveptr);
+String  string_tokenize     (String string, String delim, s32 * saveptr);
 void    string_tr           (String string, char x, char y);
 void    string_toupper      (String string);
 void    string_tolower      (String string);
-size_t  string_count        (String string, char c);
+s32     string_count        (String string, char c);
 int     string_starts_with  (String string, String prefix);
 int     string_ends_with    (String string, String suffix);
 int     string_parse_int    (String string, int * result);
 
 typedef struct {
     char * data;
-    size_t len;
-    size_t cap;
+    s32 len;
+    s32 cap;
 } StringBuilder;
 
 #define builder_to_string(B)    (String) { .data = (B).data, .len = (B).len }
@@ -278,19 +300,19 @@ typedef struct {
 #define builder_getline(B,F)        builder_getline_context     (NULL, B, F)
 #define builder_read_file(B,F)      builder_read_file_context   (NULL, B, F)
 
-void    builder_reserve_context     (void * context, StringBuilder * builder, size_t cap);
+void    builder_reserve_context     (void * context, StringBuilder * builder, s32 cap);
 void    builder_destroy_context     (void * context, StringBuilder * builder);
 void    builder_append_context      (void * context, StringBuilder * builder, String string);
 void    builder_print_context       (void * context, StringBuilder * builder, const char * fmt, ...);
 void    builder_replace_context     (void * context, StringBuilder * builder, String x, String y);
-void    builder_splice_context      (void * context, StringBuilder * builder, int start, int end, String string);
+void    builder_splice_context      (void * context, StringBuilder * builder, s32 start, s32 end, String string);
 void    builder_getline_context     (void * context, StringBuilder * builder, FILE * fp);
 void    builder_read_file_context   (void * context, StringBuilder * builder, const char * filename);
 
 int     builder_append_fixed        (StringBuilder * builder, String string);
 int     builder_print_fixed         (StringBuilder * builder, const char * fmt, ...);
 int     builder_replace_fixed       (StringBuilder * builder, String x, String y);
-int     builder_splice_fixed        (StringBuilder * builder, int start, int end, String string);
+int     builder_splice_fixed        (StringBuilder * builder, s32 start, s32 end, String string);
 int     builder_getline_fixed       (StringBuilder * builder, FILE * fp);
 int     builder_read_file_fixed     (StringBuilder * builder, const char * filename);
 
@@ -330,7 +352,7 @@ string_equal(String s1, String s2)
 
 // NOTE: if either string is shorter than n, returns false
 int
-string_equaln(String s1, String s2, size_t n)
+string_equaln(String s1, String s2, s32 n)
 {
     if (s1.len < n || s2.len < n)
         return 0;
@@ -340,7 +362,7 @@ string_equaln(String s1, String s2, size_t n)
 int
 string_compare(String s1, String s2)
 {
-    size_t min_len = s1.len < s2.len ? s1.len : s2.len;
+    s32 min_len = s1.len < s2.len ? s1.len : s2.len;
     int cmp = memcmp(s1.data, s2.data, min_len);
     if (cmp == 0) {
         if (s1.len == s2.len)
@@ -361,14 +383,14 @@ string_compare_qsort(const void * a, const void * b)
 }
 
 String
-string_substr(String string, int start, int end)
+string_substr(String string, s32 start, s32 end)
 {
     if (start < 0) start += string.len;
     if (end < 0)   end   += string.len;
     assert(start >= 0);
     assert(end >= 0);
     assert(start <= end);
-    assert(end <= (int) string.len);
+    assert(end <= string.len);
     return (String) {
         .data = string.data + start,
         .len = end - start
@@ -385,50 +407,59 @@ string_dup(String string)
     return result;
 }
 
-String
-string_trim(String string)
+String string_ltrim(String string)
 {
-    size_t i;
-    for (i = 0; i < string.len; i++) {
-        if (!isspace(string.data[i])) {
-            string.data += i;
-            string.len -= i;
-            break;
-        }
-    }
-    size_t j = string.len-1;
-    for (i = 0; i < string.len; i++, j--) {
-        if (!isspace(string.data[j]))
+    s32 i = 0;
+    for (; i < string.len; i++) {
+        if (!isspace(string.data[i]))
             break;
     }
+    string.data += i;
     string.len -= i;
     return string;
 }
 
-size_t
+String string_rtrim(String string)
+{
+    s32 i = string.len;
+    for (; i > 0; i--) {
+        if (!isspace(string.data[i-1]))
+            break;
+    }
+    string.len = i;
+    return string;
+}
+
+String
+string_trim(String string)
+{
+    return string_rtrim(string_ltrim(string));
+}
+
+s32
 string_char(String string, char c)
 {
-    for (size_t i = 0; i < string.len; i++) {
+    for (s32 i = 0; i < string.len; i++) {
         if (string.data[i] == c)
             return i;
     }
     return string.len;
 }
 
-size_t
+s32
 string_rchar(String string, char c)
 {
-    for (size_t i = 0, j = string.len-1; i < string.len; i++, j--) {
-        if (string.data[j] == c)
-            return j;
+    for (s32 i = string.len-1; i >= 0; i--) {
+        if (string.data[i] == c)
+            return i;
     }
-    return string.len;
+    return string.len; // return -1?
 }
 
-size_t
+s32
 string_span(String string, String accept)
 {
-    size_t i, j;
+    s32 i, j;
     for (i = 0; i < string.len; i++) {
         for (j = 0; j < accept.len; j++) {
             if (string.data[i] == accept.data[j])
@@ -441,10 +472,10 @@ string_span(String string, String accept)
 }
 
 
-size_t
+s32
 string_cspan(String string, String reject)
 {
-    size_t i, j;
+    s32 i, j;
     for (i = 0; i < string.len; i++) {
         for (j = 0; j < reject.len; j++) {
             if (string.data[i] == reject.data[j])
@@ -459,18 +490,18 @@ string_cspan(String string, String reject)
 String
 string_break(String string, String accept)
 {
-    size_t idx = string_cspan(string, accept);
+    s32 idx = string_cspan(string, accept);
     string.data += idx;
     string.len -= idx;
     return string;
 }
 
-size_t
+s32
 string_find(String haystack, String needle)
 {
     if (needle.len > haystack.len)
         return haystack.len;
-    for (size_t i = 0; i <= haystack.len - needle.len; i++) {
+    for (s32 i = 0; i <= haystack.len - needle.len; i++) {
         if (memcmp(haystack.data + i, needle.data, needle.len) == 0)
             return i;
     }
@@ -478,14 +509,14 @@ string_find(String haystack, String needle)
 }
 
 String
-string_tokenize(String string, String delim, size_t * saveptr)
+string_tokenize(String string, String delim, s32 * saveptr)
 {
     string.data += *saveptr;
     string.len  -= *saveptr;
-    size_t start = string_span(string, delim);
+    s32 start    = string_span(string, delim);
     string.data += start;
     string.len  -= start;
-    size_t end   = string_cspan(string, delim);
+    s32 end      = string_cspan(string, delim);
     string.len   = end;
     *saveptr += start + end;
     return string;
@@ -494,7 +525,7 @@ string_tokenize(String string, String delim, size_t * saveptr)
 void
 string_tr(String string, char x, char y)
 {
-    for (size_t i = 0; i < string.len; i++) {
+    for (s32 i = 0; i < string.len; i++) {
         if (string.data[i] == x)
             string.data[i] = y;
     }
@@ -503,7 +534,7 @@ string_tr(String string, char x, char y)
 void
 string_toupper(String string)
 {
-    for (size_t i = 0; i < string.len; i++) {
+    for (s32 i = 0; i < string.len; i++) {
         if (islower(string.data[i]))
             string.data[i] = toupper(string.data[i]);
     }
@@ -512,17 +543,17 @@ string_toupper(String string)
 void
 string_tolower(String string)
 {
-    for (size_t i = 0; i < string.len; i++) {
+    for (s32 i = 0; i < string.len; i++) {
         if (isupper(string.data[i]))
             string.data[i] = tolower(string.data[i]);
     }
 }
 
-size_t
+s32
 string_count(String string, char c)
 {
-    size_t result = 0;
-    for (size_t i = 0; i < string.len; i++) {
+    s32 result = 0;
+    for (s32 i = 0; i < string.len; i++) {
         if (string.data[i] == c)
             result++;
     }
@@ -583,7 +614,7 @@ string_parse_int(String string, int * result) {
     char * end;
     errno = 0;
     const long sl = strtol(builder.data, &end, 0);
-    if (end == string.data)                       return STRTOL_INVALID;
+    if (end == string.data)                return STRTOL_INVALID;
     else if ('\0' != *end)                        return STRTOL_EXTRA;
     else if ((LONG_MIN == sl) && ERANGE == errno) return STRTOL_RANGE;
     else if ((LONG_MAX == sl) && ERANGE == errno) return STRTOL_RANGE;
@@ -594,7 +625,7 @@ string_parse_int(String string, int * result) {
 }
 
 void
-builder_reserve_context(void * context, StringBuilder * builder, size_t cap)
+builder_reserve_context(void * context, StringBuilder * builder, s32 cap)
 {
     if (builder->cap >= cap)
         return;
@@ -613,7 +644,7 @@ builder_destroy_context(void * context, StringBuilder * builder)
 void
 builder_append_context(void * context, StringBuilder * builder, String string)
 {
-    size_t new_len = builder->len + string.len;
+    s32 new_len = builder->len + string.len;
     if (builder->cap < new_len + 1) {
         builder->cap = MAX(builder->cap * 2, new_len + 1);
         builder->data = PMK_REALLOC(context, builder->data, builder->cap);
@@ -634,7 +665,7 @@ builder_print_context(void * context, StringBuilder * builder, const char * fmt,
     assert(additional_len >= 0); // TODO: handle -1 on error
     va_end(ap);
 
-    size_t new_len = builder->len + additional_len;
+    s32 new_len = builder->len + additional_len;
     if (builder->cap < new_len + 1) {
         builder->cap = MAX(builder->cap * 2, new_len + 1);
         builder->data = PMK_REALLOC(context, builder->data, builder->cap);
@@ -642,7 +673,7 @@ builder_print_context(void * context, StringBuilder * builder, const char * fmt,
     assert(builder->cap >= new_len + 1);
 
     char * dst = builder->data + builder->len;
-    size_t rem = builder->cap - builder->len;
+    s32 rem = builder->cap - builder->len;
     vsnprintf(dst, rem, fmt, aq);
     va_end(aq);
     builder->len = new_len;
@@ -655,7 +686,7 @@ builder_getline_fixed(StringBuilder * builder, FILE * fp)
     if (builder->cap == 0)
         return -(errno = ENOBUFS);
     char * dst = builder->data + builder->len;
-    size_t avail = builder->cap - builder->len;
+    s32 avail = builder->cap - builder->len;
     if (fgets(dst, avail, fp) == NULL) {
         if (ferror(fp)) {
             perror(__FILE__ ":" STR(__LINE__));
@@ -699,7 +730,7 @@ builder_read_file_fixed(StringBuilder * builder, const char * filename)
         return -errno;
     if (fstat(fileno(fp), &sb) == -1)
         return -errno;
-    if ((size_t) (sb.st_size) > builder->cap)
+    if ((s32) (sb.st_size) > builder->cap)
         return -(errno = ENOBUFS);
 
     fread(builder->data, 1, builder->cap, fp);
@@ -729,7 +760,7 @@ builder_read_file_context(void * context, StringBuilder * builder, const char * 
         exit(EXIT_FAILURE);
     }
 
-    builder_reserve_context(context, builder, (size_t) (sb.st_size));
+    builder_reserve_context(context, builder, (s32) (sb.st_size));
     fread(builder->data, 1, builder->cap, fp);
 
     if (ferror(fp)) {
@@ -741,7 +772,7 @@ builder_read_file_context(void * context, StringBuilder * builder, const char * 
         exit(EXIT_FAILURE);
     }
 
-    builder->len = (size_t) sb.st_size;
+    builder->len = (s32) sb.st_size;
 }
 
 // adds nul terminator
@@ -769,11 +800,11 @@ builder_print_fixed(StringBuilder * builder, const char * fmt, ...)
     va_end(ap);
 
     char * dst = builder->data + builder->len;
-    size_t rem = builder->cap - builder->len;
+    s32 rem = builder->cap - builder->len;
     vsnprintf(dst, rem, fmt, aq);
     va_end(aq);
 
-    int num_trunc = required - rem;
+    s32 num_trunc = required - rem;
     if (num_trunc > 0) {
         builder->len = builder->cap-1;
         return num_trunc;
@@ -788,21 +819,21 @@ builder_replace_context(void * context, StringBuilder * builder, String x, Strin
     if (x.len == 0)
         return;
 
-    size_t new_len = builder->len - x.len + y.len;
+    s32 new_len = builder->len - x.len + y.len;
     if (new_len + 1 > builder->cap) {
-        size_t new_cap = MAX(builder->cap * 2, new_len + 1);
+        s32 new_cap = MAX(builder->cap * 2, new_len + 1);
         builder_reserve_context(context, builder, new_cap);
     }
     assert(builder->cap >= new_len + 1);
 
     String b_as_s = builder_to_string(*builder);
-    size_t x_in_b = string_find(b_as_s, x);
+    s32 x_in_b = string_find(b_as_s, x);
     if (x_in_b == b_as_s.len)
         return;
 
     char * rest_src = b_as_s.data + x_in_b + x.len;
     char * rest_dst = b_as_s.data + x_in_b + y.len;
-    size_t rest_len = b_as_s.len  - x_in_b - x.len;
+    s32    rest_len = b_as_s.len  - x_in_b - x.len;
 
     memmove(rest_dst, rest_src, rest_len);
     memcpy(b_as_s.data + x_in_b, y.data, y.len);
@@ -812,23 +843,23 @@ builder_replace_context(void * context, StringBuilder * builder, String x, Strin
 
 // TODO: should this be (start, count) instead?
 void
-builder_splice_context(void * context, StringBuilder * builder, int start, int end, String string)
+builder_splice_context(void * context, StringBuilder * builder, s32 start, s32 end, String string)
 {
     if (start < 0) start += builder->len;
     if (end < 0)   end   += builder->len;
     assert(start >= 0);
     assert(end >= 0);
     assert(start <= end);
-    assert(end <= (int) builder->len);
-    size_t nremove = end - start;
-    size_t new_len = builder->len - nremove + string.len;
+    assert(end <= builder->len);
+    s32 nremove = end - start;
+    s32 new_len = builder->len - nremove + string.len;
     if (new_len + 1 > builder->cap) {
-        size_t new_cap = MAX(builder->cap * 2, new_len + 1);
+        s32 new_cap = MAX(builder->cap * 2, new_len + 1);
         builder_reserve_context(context, builder, new_cap);
     }
     char * rest_src = builder->data + end;
     char * rest_dst = builder->data + start + string.len;
-    size_t rest_len = builder->len - end;
+    s32    rest_len = builder->len - end;
     memmove(rest_dst, rest_src, rest_len);
     memcpy(builder->data + start, string.data, string.len);
     builder->len = new_len;
@@ -842,19 +873,19 @@ builder_replace_fixed(StringBuilder * builder, String x, String y)
     if (x.len == 0)
         return -1;
 
-    size_t new_len = builder->len - x.len + y.len;
+    s32 new_len = builder->len - x.len + y.len;
     if (new_len + 1 > builder->cap)
         return -1;
     assert(builder->cap >= new_len + 1);
 
     String b_as_s = builder_to_string(*builder);
-    size_t x_in_b = string_find(b_as_s, x);
+    s32 x_in_b = string_find(b_as_s, x);
     if (x_in_b == b_as_s.len)
         return -1;
 
     char * rest_src = b_as_s.data + x_in_b + x.len;
     char * rest_dst = b_as_s.data + x_in_b + y.len;
-    size_t rest_len = b_as_s.len  - x_in_b - x.len;
+    s32 rest_len  = b_as_s.len  - x_in_b - x.len;
 
     memmove(rest_dst, rest_src, rest_len);
     memcpy(b_as_s.data + x_in_b, y.data, y.len);
@@ -865,21 +896,21 @@ builder_replace_fixed(StringBuilder * builder, String x, String y)
 
 // TODO: should this be (start, count) instead?
 int
-builder_splice_fixed(StringBuilder * builder, int start, int end, String string)
+builder_splice_fixed(StringBuilder * builder, s32 start, s32 end, String string)
 {
     if (start < 0) start += builder->len;
     if (end < 0)   end   += builder->len;
     assert(start >= 0);
     assert(end >= 0);
     assert(start <= end);
-    assert(end <= (int) builder->len);
-    size_t nremove = end - start;
-    size_t new_len = builder->len - nremove + string.len;
+    assert(end <= builder->len);
+    s32 nremove = end - start;
+    s32 new_len = builder->len - nremove + string.len;
     if (new_len + 1 > builder->cap)
         return -1;
     char * rest_src = builder->data + end;
     char * rest_dst = builder->data + start + string.len;
-    size_t rest_len = builder->len - end;
+    s32    rest_len  = builder->len - end;
     memmove(rest_dst, rest_src, rest_len);
     memcpy(builder->data + start, string.data, string.len);
     builder->len = new_len;
@@ -901,20 +932,20 @@ random_printable()
 }
 
 static void
-gen_random_string(char * s, size_t len)
+gen_random_string(char * s, s32 len)
 {
-    for (size_t i = 0; i < len; i++) {
+    for (s32 i = 0; i < len; i++) {
         s[i] = random_printable();
     }
     s[len] = '\0';
 }
 
-static size_t
-change_random_char(char * s, size_t len)
+static s32
+change_random_char(char * s, s32 len)
 {
-    size_t index = rand() % len;
+    s32 index = rand() % len;
     char prev = s[index];
-    int r;
+    char r;
     do {
         r = random_printable();
     } while (r == prev);
@@ -966,6 +997,8 @@ pmk_string_test()
     PMK_FREE(NULL, dup_str.data);
 
     // string_trim()
+    printf("[%.*s]\n", len_data(string_trim(str_lit("  good morning \n \t "))));
+    printf("[%.*s]\n", len_data(string_trim(str_lit("  "))));
     assert(string_equal(string_trim(str_lit("  good morning \n \t ")), str_lit("good morning")));
     assert(string_equal(string_trim(str_lit("  ")), str_lit("")));
 
@@ -1011,7 +1044,7 @@ pmk_string_test()
     {
         String input = str_lit("  good \t morning \t ");
         String delim = str_lit(" \t");
-        size_t save = 0;
+        s32 save = 0;
         assert(string_equal(string_tokenize(input, delim, &save), str_lit("good")));
         assert(string_equal(string_tokenize(input, delim, &save), str_lit("morning")));
     }
@@ -1173,10 +1206,10 @@ pmk_string_test()
 #define LEN 100
 #define N 100
         char s1[LEN+1], s2[LEN+1];
-        for (size_t i = 0; i < N; i++) {
+        for (s32 i = 0; i < N; i++) {
             gen_random_string(s1, LEN);
             strncpy(s2, s1, LEN);
-            size_t index = change_random_char(s1, LEN);
+            s32 index = change_random_char(s1, LEN);
             String str1 = str_lit(s1);
             String str2 = str_lit(s2);
             assert(string_equal(str1, str2) == (strcmp(s1, s2) == 0));
