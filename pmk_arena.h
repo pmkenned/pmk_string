@@ -19,8 +19,8 @@ struct Arena {
 extern Arena default_arena;
 
 Arena   arena_create        (size_t cap);
-void *  arena_realloc_into  (Arena * arena, void * ptr, size_t size);
-void *  arena_realloc       (void * ptr, size_t size);
+void *  arena_realloc_into  (Arena * arena, void * ptr, size_t old_size, size_t new_size);
+void *  arena_realloc       (void * ptr, size_t old_size, size_t new_size);
 void    arena_destroy       (Arena * arena);
 //void    arena_free_after    (void * ptr); // TODO
 
@@ -70,16 +70,16 @@ arena_create(size_t cap)
 // TODO: bump downwards
 // TODO: use arena stack?
 void *
-arena_realloc_into(Arena * arena, void * ptr, size_t size)
+arena_realloc_into(Arena * arena, void * ptr, size_t old_size, size_t new_size)
 {
-    DEBUG_MSG("arena_realloc_into(%p, %p, %zu)\n", arena, ptr, size);
-    if (ptr == NULL && size == 0)
+    DEBUG_MSG("arena_realloc_into(%p, %p, %zu, %zu)\n", arena, ptr, old_size, new_size);
+    if (ptr == NULL && new_size == 0)
         return NULL;
 
     if (arena == NULL)
         arena = &default_arena;
 
-    size_t required = ALIGN_UP(size + sizeof(size_t), ALIGNMENT);
+    size_t required = ALIGN_UP(new_size + sizeof(size_t), ALIGNMENT);
     size_t avail = arena->cap - arena->len;
     if (arena->cap == 0) {
         size_t new_arena_cap = MAX(required, DEFAULT_ARENA_CAP);
@@ -94,31 +94,27 @@ arena_realloc_into(Arena * arena, void * ptr, size_t size)
         arena->next_arena = old_arena;
     }
 
-    *((size_t *) (arena->data + arena->len)) = size;
-    arena->len += sizeof(size_t);
     void * result = arena->data + arena->len;
-    arena->len = ALIGN_UP(arena->len + size, ALIGNMENT);
+    arena->len = ALIGN_UP(arena->len + new_size, ALIGNMENT);
 
-    if (ptr && size > 0) {
-        // TODO: if size < old_size, maybe just leave in place?
-        size_t old_size = *((size_t *) ptr - 1);
-        size_t min_size = MIN(old_size, size);
+    if (ptr && new_size > 0) {
+        // TODO: if new_size < old_size, maybe just leave in place?
+        size_t min_size = MIN(old_size, new_size);
         memcpy(result, ptr, min_size);
-    } else if (ptr && size == 0) {
+    } else if (ptr && new_size == 0) {
         // cannot free individual allocations from an arena
 #if PMK_DEBUG
-        size_t old_size = *((size_t *) ptr - 1);
         memset(ptr, 0xcd, old_size);
 #endif
     }
 
-    //DEBUG_MSG("Allocated %zu bytes from arena at %p (buffer at %p) at %p (from %p)\n", size, arena, arena->data, result, ptr);
+    //DEBUG_MSG("Allocated %zu bytes from arena at %p (buffer at %p) at %p (from %p)\n", new_size, arena, arena->data, result, ptr);
     return result;
 }
 
 void *
-arena_realloc(void * ptr, size_t size) {
-    return arena_realloc_into(&default_arena, ptr, size);
+arena_realloc(void * ptr, size_t old_size, size_t new_size) {
+    return arena_realloc_into(&default_arena, ptr, old_size, new_size);
 }
 
 static void

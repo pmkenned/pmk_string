@@ -207,22 +207,24 @@ allocation. This is accomplished with the following two features:
 
 By default, functions needing dynamic memory allocation will use realloc, but
 you can replace this function by defining PMK_REALLOC. For example, if
-my_realloc() is a function with the same signature as realloc, you can use this
-allocator like so:
+my_realloc() is a function with the same signature as realloc, you can use it
+like so:
 
-    #define PMK_REALLOC(context, pointer, size) my_realloc(pointer, size)
+    #define PMK_REALLOC(context, ptr, old_size, new_size) my_realloc(ptr, new_size)
 
-Notice that the context argument is discarded. This parameter is used by the
-*_context() functions. If you do not use these functions, you should have no
-problem.
+Notice that in this example, the context and old_size macro parameters are being
+discarded. If your allocator needs to be told the size of the allocation it is
+resizing, you can simply pass in the old_size parameter.
 
-But if your allocator needs additional information to perform allocations, then
-you must pass this pointer to your allocator:
+The same thing applies for the context parameter. All the functions in this
+library with names ending in _context take in a context parameter which they
+will pass to PMK_REALLOC. This is useful for allocators which need additional
+data in order to perform allocations, e.g. an arena allocator with separate
+arenas can use the context parameter to know which arena to allocate from.
 
-    #define PMK_REALLOC(context, pointer, size) my_realloc(context, pointer, size)
-
-The file pmk_arena.h has been included to show an example of overriding the
-default allocator with a simple arena allocator. See examples.c.
+(If your allocator doesn't take a context parameter, it doesn't
+make sense to use the _context functions because the parameter will be
+discarded)
 
 ## Known Issues
 
@@ -296,7 +298,7 @@ typedef struct {
 #define builder_from_fixed(F)   (StringBuilder) { .data = (F), .cap = DOWN_TO_ODD(sizeof(F)) }
 
 #define builder_reserve(B,CAP)      builder_reserve_context     (NULL, B, CAP)
-#define builder_destroy(B,CAP)      builder_destroy_context     (NULL, B)
+#define builder_destroy(B)          builder_destroy_context     (NULL, B)
 #define builder_append(B,STR)       builder_append_context      (NULL, B, STR)
 #define builder_print(B,FMT,...)    builder_print_context       (NULL, B, FMT, __VA_ARGS__)
 #define builder_replace(B,X,Y)      builder_replace_context     (NULL, B, X, Y)
@@ -329,9 +331,10 @@ int     builder_read_file_context   (void * context, StringBuilder * builder, co
 
 #ifndef PMK_REALLOC
 #include <stdlib.h>
-#define PMK_REALLOC(c,p,s) realloc(p,s)
+#define PMK_REALLOC(c,p,os,ns) realloc(p,ns)
 #endif
-#define PMK_FREE(c,p) p = PMK_REALLOC(c,p,0)
+#define PMK_MALLOC(c,ns)    PMK_REALLOC(c,NULL,0,ns)
+#define PMK_FREE(c,p)       (p = PMK_REALLOC(c,p,0,0))
 
 #define XSTR(X)  #X
 #define STR(X) XSTR(X)
@@ -404,7 +407,7 @@ String
 string_dup(String string)
 {
     String result;
-    result.data = PMK_REALLOC(NULL, NULL, string.len + 1);
+    result.data = PMK_MALLOC(NULL, string.len + 1);
     result.len = string.len;
     memcpy(result.data, string.data, string.len);
     result.data[result.len] = '\0';
@@ -641,7 +644,7 @@ builder_reserve_context(void * context, StringBuilder * builder, s32 cap)
     int switch_to_dyn = IS_FIXED(*builder);
     cap = UP_TO_EVEN(cap);
     char * ptr = switch_to_dyn ? NULL : builder->data;
-    char * new_data = PMK_REALLOC(context, ptr, cap);
+    char * new_data = PMK_REALLOC(context, ptr, orig_cap, cap);
     if (switch_to_dyn)
         memcpy(new_data, orig_data, orig_cap);
 
@@ -822,7 +825,7 @@ random_printable()
 }
 
 static void
-gen_random_string(char * s, s32 len)
+gen_random_cstring(char * s, s32 len)
 {
     for (s32 i = 0; i < len; i++) {
         s[i] = random_printable();
@@ -987,7 +990,7 @@ pmk_string_test()
         builder_reserve(&builder, 512);
         assert(builder.cap >= 512);
         memset(builder.data, '\0', 512);
-        PMK_FREE(NULL, builder.data);
+        builder_destroy(&builder);
     }
 
     // builder_append(), builder_print(), builder_replace()
@@ -1007,7 +1010,7 @@ pmk_string_test()
         builder_replace(&builder, str_lit("red"), str_lit("yellow"));
         assert(string_equal(builder_to_string(builder), str_lit("123 green balloons")));
 
-        PMK_FREE(NULL, builder.data);
+        builder_destroy(&builder);
     }
 
     // builder_replace()
@@ -1017,7 +1020,7 @@ pmk_string_test()
         builder_append(&builder, str_lit("abc"));
         builder_replace(&builder, str_lit("b"), str_lit("def"));
         assert(string_equal(builder_to_string(builder), str_lit("adefc")));
-        PMK_FREE(NULL, builder.data);
+        builder_destroy(&builder);
     }
 
     // builder_splice()
@@ -1035,7 +1038,7 @@ pmk_string_test()
         builder_splice(&builder, 1, 1, str_lit("def"));
         assert(string_equal(builder_to_string(builder), str_lit("adefbc")));
 
-        PMK_FREE(NULL, builder.data);
+        builder_destroy(&builder);
     }
 
     // TODO: test builder_getline()
@@ -1058,6 +1061,8 @@ pmk_string_test()
 
         builder_replace(&builder, str_lit("red"), str_lit("yellow"));
         assert(string_equal(builder_to_string(builder), str_lit("123 green balloons")));
+
+        builder_destroy(&builder);
     }
 
     // builder_replace() with fixed-sized buffer
@@ -1067,6 +1072,7 @@ pmk_string_test()
         builder_append(&builder, str_lit("abc"));
         builder_replace(&builder, str_lit("b"), str_lit("def"));
         assert(string_equal(builder_to_string(builder), str_lit("adefc")));
+        builder_destroy(&builder);
     }
 
     // builder_splice() with fixed-sized buffer
@@ -1086,22 +1092,38 @@ pmk_string_test()
 
         builder_splice(&builder, 1, 1, str_lit("abcdefghijklmnop"));
         assert(string_equal(builder_to_string(builder), str_lit("aabcdefghijklmnopdefbc")));
+
+        builder_destroy(&builder);
     }
 
     // TODO: do more random testing
+
+    // string_equal(), string_equaln(), string_compare()
     {
 #define LEN 100
-#define N 100
+#define N 10
         char s1[LEN+1], s2[LEN+1];
         for (s32 i = 0; i < N; i++) {
-            gen_random_string(s1, LEN);
-            strncpy(s2, s1, LEN);
+
+            // create a random string, create a copy with one random character changed
+            gen_random_cstring(s1, LEN);
+            memcpy(s2, s1, LEN);
             s32 index = change_random_char(s1, LEN);
+
             String str1 = str_lit(s1);
             String str2 = str_lit(s2);
-            assert(string_equal(str1, str2) == (strcmp(s1, s2) == 0));
-            assert(string_equaln(str1, str2, index) == (strncmp(s1, s2, index) == 0));
-            assert(string_compare(str1, str2) == strcmp(s1, s2));
+
+            assert(string_equal (str1, str2)        ==  (strcmp(s1, s2)         == 0));
+            assert(string_equaln(str1, str2, index) ==  (strncmp(s1, s2, index) == 0));
+
+            int compare = string_compare(str1, str2);
+            int cmp     = strcmp(s1, s2);
+
+            // constrain results to -1, 0, 1
+            compare = (compare < 0) ? -1 : (compare > 0) ? 1 : 0;
+            cmp = (compare < 0) ? -1 : (compare > 0) ? 1 : 0;
+
+            assert(compare == cmp);
         }
 #undef LEN
 #undef N

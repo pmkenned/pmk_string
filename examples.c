@@ -6,7 +6,7 @@
 #include "pmk_arena.h"
 
 #define PMK_STRING_IMPL
-#define PMK_REALLOC(c,p,s) arena_realloc_into(c,p,s)
+#define PMK_REALLOC(c,p,os,ns) arena_realloc_into(c,p,os,ns)
 #include "pmk_string.h"
 
 #include <stdio.h>
@@ -34,7 +34,9 @@ example2()
 
     printf("Example2: %.*s\n", len_data(builder));
 
-    //free(builder.data);
+    // if not using an arena, you will need to manually destroy StringBuilders
+    // to prevent memory leaks
+    builder_destroy(&builder);
 }
 
 static void
@@ -51,7 +53,7 @@ example3()
 
     printf("Example3: %.*s\n", len_data(builder));
 
-    //free(builder.data);
+    builder_destroy(&builder);
 }
 
 static void
@@ -95,6 +97,8 @@ example5()
         builder_append(&builder, animals[i]);
     }
     printf("Example5: %.*s\n", len_data(builder));
+
+    builder_destroy(&builder);
 }
 
 static void
@@ -105,6 +109,7 @@ example6()
     String name = str_lit("Paul");
     builder_print_context(&arena, &builder, "Hello, %.*s. This is in an arena.", len_data(name));
     printf("Example6: %.*s\n", len_data(builder));
+    builder_destroy(&builder);
     arena_destroy(&arena);
 }
 
@@ -121,7 +126,11 @@ example7()
     builder_print_context(&arena1, &builder, "Hello, %.*s.", len_data(name));
     builder_print_context(&arena2, &builder, " Nice to meet you, %.*s.", len_data(name));
 
-    builder.data = arena_realloc_into(&arena3, builder.data, builder.cap);
+    void * old_ptr = builder.data;
+    builder.data = arena_realloc_into(&arena3, builder.data, builder.cap, builder.cap);
+    // if not overriding PMK_REALLOC, the original buffer was allocated by malloc()
+    // so we need to free it to prevent a leak
+    PMK_FREE(NULL, old_ptr);
 
     arena_destroy(&arena1);
     arena_destroy(&arena2);
@@ -140,6 +149,8 @@ example8()
 
     builder_splice(&builder, 21, 28, str_lit("evening"));
     printf("Example8: %.*s\n", len_data(builder));
+
+    builder_destroy(&builder);
 }
 
 static void
@@ -151,6 +162,7 @@ example9()
     String name = builder_to_string(builder);
     name = string_trim(name);
     printf("Example9: Hello, %.*s!\n", len_data(name));
+    builder_destroy(&builder);
 }
 
 static void
@@ -167,6 +179,7 @@ example10()
         return;
     }
     printf("Example10: Next year, you will be %d years old!\n", age_int+1);
+    builder_destroy(&builder);
 }
 
 static void
@@ -177,6 +190,7 @@ example11()
     builder_read_file(&builder, filename);
     s32 line_count = string_count(builder_to_string(builder), '\n');
     printf("Example11: there are %d bytes and %d lines in %s\n", builder.len, line_count, filename);
+    builder_destroy(&builder);
 }
 
 static void
@@ -188,6 +202,7 @@ example12()
     builder_read_file(&builder, filename);
     s32 line_count = string_count(builder_to_string(builder), '\n');
     printf("Example12: there are %d bytes and %d lines in %s\n", builder.len, line_count, filename);
+    builder_destroy(&builder);
 }
 
 int main()
@@ -195,8 +210,7 @@ int main()
 #if PMK_STRING_TEST
     pmk_string_test();
     fprintf(stderr, "All tests passed.\n");
-    return 0;
-#endif
+#else
     example1();
     example2();
     example3();
@@ -209,6 +223,7 @@ int main()
     //example10();
     example11();
     example12();
+#endif
 
     arena_destroy(&default_arena);
 
