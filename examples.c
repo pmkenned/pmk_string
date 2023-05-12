@@ -183,12 +183,9 @@ static void
 example12()
 {
     const char * filename = "README.md";
-    char buffer[1 << 13];
+    char buffer[1 << 6];
     StringBuilder builder = builder_from_fixed(buffer);
-    if (builder_read_file_fixed(&builder, filename) < 0) {
-        perror("example12()");
-        exit(EXIT_FAILURE);
-    }
+    builder_read_file(&builder, filename);
     s32 line_count = string_count(builder_to_string(builder), '\n');
     printf("Example12: there are %d bytes and %d lines in %s\n", builder.len, line_count, filename);
 }

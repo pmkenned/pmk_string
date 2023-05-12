@@ -164,6 +164,8 @@ can simply set the len field to 0:
     builder.len = 0;
     builder_print(&builder, "%s %d\n", "goodbyte", 456);
 
+TODO: _fixed functions were deleted; update the comments below
+
 As previously mentioned, the buffer for a StringBuilder does not have to be
 dynamically allocated. It can be a fixed-sized buffer located on the stack,
 BSS, or data segment. To use a fixed-sized buffer, however, you must use the
@@ -289,7 +291,7 @@ typedef struct {
 } StringBuilder;
 
 #define builder_to_string(B)    (String) { .data = (B).data, .len = (B).len }
-#define builder_from_fixed(F)   (StringBuilder) { .data = (F), .cap = sizeof(F) }
+#define builder_from_fixed(F)   (StringBuilder) { .data = (F), .cap = DOWN_TO_ODD(sizeof(F)) }
 
 #define builder_reserve(B,CAP)      builder_reserve_context     (NULL, B, CAP)
 #define builder_destroy(B,CAP)      builder_destroy_context     (NULL, B)
@@ -303,18 +305,11 @@ typedef struct {
 void    builder_reserve_context     (void * context, StringBuilder * builder, s32 cap);
 void    builder_destroy_context     (void * context, StringBuilder * builder);
 void    builder_append_context      (void * context, StringBuilder * builder, String string);
-void    builder_print_context       (void * context, StringBuilder * builder, const char * fmt, ...);
-void    builder_replace_context     (void * context, StringBuilder * builder, String x, String y);
+int     builder_print_context       (void * context, StringBuilder * builder, const char * fmt, ...);
+int     builder_replace_context     (void * context, StringBuilder * builder, String x, String y);
 void    builder_splice_context      (void * context, StringBuilder * builder, s32 start, s32 end, String string);
-void    builder_getline_context     (void * context, StringBuilder * builder, FILE * fp);
-void    builder_read_file_context   (void * context, StringBuilder * builder, const char * filename);
-
-int     builder_append_fixed        (StringBuilder * builder, String string);
-int     builder_print_fixed         (StringBuilder * builder, const char * fmt, ...);
-int     builder_replace_fixed       (StringBuilder * builder, String x, String y);
-int     builder_splice_fixed        (StringBuilder * builder, s32 start, s32 end, String string);
-int     builder_getline_fixed       (StringBuilder * builder, FILE * fp);
-int     builder_read_file_fixed     (StringBuilder * builder, const char * filename);
+int     builder_getline_context     (void * context, StringBuilder * builder, FILE * fp);
+int     builder_read_file_context   (void * context, StringBuilder * builder, const char * filename);
 
 #endif /* PMK_STRING_H */
 
@@ -341,6 +336,11 @@ int     builder_read_file_fixed     (StringBuilder * builder, const char * filen
 
 #define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
 #define MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
+
+#define UP_TO_EVEN(X)   (((X)+1) & ~1)
+#define DOWN_TO_ODD(X)  (((X)-1) | 1)
+
+#define IS_FIXED(B) ((B).cap & 1)
 
 int
 string_equal(String s1, String s2)
@@ -397,13 +397,15 @@ string_substr(String string, s32 start, s32 end)
     };
 }
 
+// nul-terminates the copy
 String
 string_dup(String string)
 {
     String result;
-    result.data = PMK_REALLOC(NULL, NULL, string.len);
+    result.data = PMK_REALLOC(NULL, NULL, string.len + 1);
     result.len = string.len;
     memcpy(result.data, string.data, string.len);
+    result.data[result.len] = '\0';
     return result;
 }
 
@@ -609,8 +611,7 @@ int
 string_parse_int(String string, int * result) {
     char tmp[32];
     StringBuilder builder = builder_from_fixed(tmp);
-    if (builder_append_fixed(&builder, string) < 0)
-        return STRTOL_INVALID;
+    builder_append(&builder, string); // guarantee nul-termination
     char * end;
     errno = 0;
     const long sl = strtol(builder.data, &end, 0);
@@ -629,13 +630,30 @@ builder_reserve_context(void * context, StringBuilder * builder, s32 cap)
 {
     if (builder->cap >= cap)
         return;
+
+    char * orig_data = builder->data;
+    s32    orig_cap  = builder->cap;
+
+    // if switching to dynamically-allocated, pass NULL
+    // to realloc (to do malloc), then copy the data over
+    int switch_to_dyn = IS_FIXED(*builder);
+    cap = UP_TO_EVEN(cap);
+    char * ptr = switch_to_dyn ? NULL : builder->data;
+    char * new_data = PMK_REALLOC(context, ptr, cap);
+    if (switch_to_dyn)
+        memcpy(new_data, orig_data, orig_cap);
+
+    builder->data = new_data;
     builder->cap = cap;
-    builder->data = PMK_REALLOC(context, builder->data, cap);
 }
 
 void
 builder_destroy_context(void * context, StringBuilder * builder)
 {
+    if (IS_FIXED(*builder)) {
+        builder->len = 0;
+        return;
+    }
     PMK_FREE(context, builder->data);
     *builder = (StringBuilder) {0};
 }
@@ -646,8 +664,8 @@ builder_append_context(void * context, StringBuilder * builder, String string)
 {
     s32 new_len = builder->len + string.len;
     if (builder->cap < new_len + 1) {
-        builder->cap = MAX(builder->cap * 2, new_len + 1);
-        builder->data = PMK_REALLOC(context, builder->data, builder->cap);
+        s32 new_cap = MAX(builder->cap * 2, new_len + 1);
+        builder_reserve_context(context, builder, new_cap);
     }
     assert(builder->cap >= new_len + 1);
     memcpy(builder->data + builder->len, string.data, string.len);
@@ -655,20 +673,21 @@ builder_append_context(void * context, StringBuilder * builder, String string)
     builder->data[builder->len] = '\0';
 }
 
-void
+int
 builder_print_context(void * context, StringBuilder * builder, const char * fmt, ...)
 {
     va_list ap, aq;
     va_start(ap, fmt);
     va_copy(aq, ap);
     int additional_len = vsnprintf(NULL, 0, fmt, ap);
-    assert(additional_len >= 0); // TODO: handle -1 on error
+    if (additional_len < 0)
+        return additional_len;
     va_end(ap);
 
     s32 new_len = builder->len + additional_len;
     if (builder->cap < new_len + 1) {
-        builder->cap = MAX(builder->cap * 2, new_len + 1);
-        builder->data = PMK_REALLOC(context, builder->data, builder->cap);
+        s32 new_cap = MAX(builder->cap * 2, new_len + 1);
+        builder_reserve_context(context, builder, new_cap);
     }
     assert(builder->cap >= new_len + 1);
 
@@ -677,52 +696,42 @@ builder_print_context(void * context, StringBuilder * builder, const char * fmt,
     vsnprintf(dst, rem, fmt, aq);
     va_end(aq);
     builder->len = new_len;
+    return 0;
 }
 
-// returns 0 on success, -errno if insufficient space
 int
-builder_getline_fixed(StringBuilder * builder, FILE * fp)
-{
-    if (builder->cap == 0)
-        return -(errno = ENOBUFS);
-    char * dst = builder->data + builder->len;
-    s32 avail = builder->cap - builder->len;
-    if (fgets(dst, avail, fp) == NULL) {
-        if (ferror(fp)) {
-            perror(__FILE__ ":" STR(__LINE__));
-            exit(EXIT_FAILURE);
-        }
-        // only possibility: EOF with 0 chars read
-        builder->len = 0;
-        return 0;
-    }
-    builder->len = strlen(builder->data);
-    assert(builder->len > 0);
-    if (builder->data[builder->len-1] == '\n') {
-        builder->len--;
-        return 0;
-    }
-    if (feof(fp)) // file ended without a newline
-        return 0;
-    return -(errno = ENOBUFS);
-}
-
-void
 builder_getline_context(void * context, StringBuilder * builder, FILE * fp)
 {
     if (builder->cap == 0)
         builder_reserve_context(context, builder, 128);
-    while (builder_getline_fixed(builder, fp) < 0) {
-        builder_reserve_context(context, builder, builder->cap * 2);
+
+    while (1) {
+        char * dst = builder->data + builder->len;
+        s32 avail = builder->cap - builder->len;
+        if (fgets(dst, avail, fp) == NULL) {
+            if (ferror(fp))
+                return -errno;
+            // only possibility: EOF with 0 chars read
+            builder->len = 0;
+            return 0;
+        }
+        builder->len = strlen(builder->data);
+        assert(builder->len > 0);
+        if (builder->data[builder->len-1] == '\n') {
+            builder->len--;
+            return 0;
+        }
+        if (feof(fp)) // file ended without a newline
+            return 0;
+        // there's more data but the buffer is full
+        builder_reserve_context(context, builder, 128);
     }
 }
 
-// returns 0 on success, -errno on error
-// TODO: decide best way to handle errors; should probably be consistent with builder_read_file_context
+// terminates on error
 int
-builder_read_file_fixed(StringBuilder * builder, const char * filename)
+builder_read_file_context(void * context, StringBuilder * builder, const char * filename)
 {
-    errno = 0;
     FILE * fp = fopen(filename, "r");
     struct stat sb;
 
@@ -730,9 +739,8 @@ builder_read_file_fixed(StringBuilder * builder, const char * filename)
         return -errno;
     if (fstat(fileno(fp), &sb) == -1)
         return -errno;
-    if ((s32) (sb.st_size) > builder->cap)
-        return -(errno = ENOBUFS);
 
+    builder_reserve_context(context, builder, (s32) (sb.st_size));
     fread(builder->data, 1, builder->cap, fp);
 
     if (ferror(fp))
@@ -740,84 +748,15 @@ builder_read_file_fixed(StringBuilder * builder, const char * filename)
     if (fclose(fp) != 0)
         return -errno;
 
-    builder->len = sb.st_size;
-    return 0;
-}
-
-// terminates on error
-void
-builder_read_file_context(void * context, StringBuilder * builder, const char * filename)
-{
-    FILE * fp = fopen(filename, "r");
-    struct stat sb;
-
-    if (fp == NULL) {
-        perror(filename);
-        exit(EXIT_FAILURE);
-    }
-    if (fstat(fileno(fp), &sb) == -1) {
-        perror(filename);
-        exit(EXIT_FAILURE);
-    }
-
-    builder_reserve_context(context, builder, (s32) (sb.st_size));
-    fread(builder->data, 1, builder->cap, fp);
-
-    if (ferror(fp)) {
-        perror(filename);
-        exit(EXIT_FAILURE);
-    }
-    if (fclose(fp) != 0) {
-        perror(filename);
-        exit(EXIT_FAILURE);
-    }
-
     builder->len = (s32) sb.st_size;
-}
-
-// adds nul terminator
-int
-builder_append_fixed(StringBuilder * builder, String string)
-{
-    if (builder->cap < builder->len + string.len + 1)
-        return -(errno = ENOBUFS);
-    memcpy(builder->data + builder->len, string.data, string.len);
-    builder->len += string.len;
-    builder->data[builder->len] = '\0';
     return 0;
 }
 
-// returns 0 on success, or number of bytes truncated
 int
-builder_print_fixed(StringBuilder * builder, const char * fmt, ...)
-{
-    va_list ap, aq;
-    va_start(ap, fmt);
-    va_copy(aq, ap);
-
-    int required = vsnprintf(NULL, 0, fmt, ap) + 1;
-    assert(required > 0); // TODO: handle -1 on error
-    va_end(ap);
-
-    char * dst = builder->data + builder->len;
-    s32 rem = builder->cap - builder->len;
-    vsnprintf(dst, rem, fmt, aq);
-    va_end(aq);
-
-    s32 num_trunc = required - rem;
-    if (num_trunc > 0) {
-        builder->len = builder->cap-1;
-        return num_trunc;
-    }
-    builder->len += required-1;
-    return 0;
-}
-
-void
 builder_replace_context(void * context, StringBuilder * builder, String x, String y)
 {
     if (x.len == 0)
-        return;
+        return -1;
 
     s32 new_len = builder->len - x.len + y.len;
     if (new_len + 1 > builder->cap) {
@@ -829,7 +768,7 @@ builder_replace_context(void * context, StringBuilder * builder, String x, Strin
     String b_as_s = builder_to_string(*builder);
     s32 x_in_b = string_find(b_as_s, x);
     if (x_in_b == b_as_s.len)
-        return;
+        return -1;
 
     char * rest_src = b_as_s.data + x_in_b + x.len;
     char * rest_dst = b_as_s.data + x_in_b + y.len;
@@ -839,6 +778,7 @@ builder_replace_context(void * context, StringBuilder * builder, String x, Strin
     memcpy(b_as_s.data + x_in_b, y.data, y.len);
     builder->len = new_len;
     builder->data[new_len] = '\0';
+    return 0;
 }
 
 // TODO: should this be (start, count) instead?
@@ -864,58 +804,6 @@ builder_splice_context(void * context, StringBuilder * builder, s32 start, s32 e
     memcpy(builder->data + start, string.data, string.len);
     builder->len = new_len;
     builder->data[builder->len] = '\0';
-}
-
-// return 0 on success, return -1 if insufficient space or if x not found
-int
-builder_replace_fixed(StringBuilder * builder, String x, String y)
-{
-    if (x.len == 0)
-        return -1;
-
-    s32 new_len = builder->len - x.len + y.len;
-    if (new_len + 1 > builder->cap)
-        return -1;
-    assert(builder->cap >= new_len + 1);
-
-    String b_as_s = builder_to_string(*builder);
-    s32 x_in_b = string_find(b_as_s, x);
-    if (x_in_b == b_as_s.len)
-        return -1;
-
-    char * rest_src = b_as_s.data + x_in_b + x.len;
-    char * rest_dst = b_as_s.data + x_in_b + y.len;
-    s32 rest_len  = b_as_s.len  - x_in_b - x.len;
-
-    memmove(rest_dst, rest_src, rest_len);
-    memcpy(b_as_s.data + x_in_b, y.data, y.len);
-    builder->len = new_len;
-    builder->data[new_len] = '\0';
-    return 0;
-}
-
-// TODO: should this be (start, count) instead?
-int
-builder_splice_fixed(StringBuilder * builder, s32 start, s32 end, String string)
-{
-    if (start < 0) start += builder->len;
-    if (end < 0)   end   += builder->len;
-    assert(start >= 0);
-    assert(end >= 0);
-    assert(start <= end);
-    assert(end <= builder->len);
-    s32 nremove = end - start;
-    s32 new_len = builder->len - nremove + string.len;
-    if (new_len + 1 > builder->cap)
-        return -1;
-    char * rest_src = builder->data + end;
-    char * rest_dst = builder->data + start + string.len;
-    s32    rest_len  = builder->len - end;
-    memmove(rest_dst, rest_src, rest_len);
-    memcpy(builder->data + start, string.data, string.len);
-    builder->len = new_len;
-    builder->data[builder->len] = '\0';
-    return 0;
 }
 
 #ifdef PMK_STRING_TEST
@@ -997,8 +885,6 @@ pmk_string_test()
     PMK_FREE(NULL, dup_str.data);
 
     // string_trim()
-    printf("[%.*s]\n", len_data(string_trim(str_lit("  good morning \n \t "))));
-    printf("[%.*s]\n", len_data(string_trim(str_lit("  "))));
     assert(string_equal(string_trim(str_lit("  good morning \n \t ")), str_lit("good morning")));
     assert(string_equal(string_trim(str_lit("  ")), str_lit("")));
 
@@ -1097,7 +983,7 @@ pmk_string_test()
     {
         StringBuilder builder = {0};
         builder_reserve(&builder, 512);
-        assert(builder.cap == 512);
+        assert(builder.cap >= 512);
         memset(builder.data, '\0', 512);
         PMK_FREE(NULL, builder.data);
     }
@@ -1153,53 +1039,52 @@ pmk_string_test()
     // TODO: test builder_getline()
     // TODO: test builder_read_file()
 
-    // builder_append_fixed(), builder_print_fixed(), builder_replace_fixed()
+    // builder_append(), builder_print(), builder_replace() with fixed-sized buffers
     {
         char char_buffer[32];
         StringBuilder builder = builder_from_fixed(char_buffer);
-        builder_append_fixed(&builder, str_lit("good "));
-        builder_append_fixed(&builder, str_lit("morning"));
+        builder_append(&builder, str_lit("good "));
+        builder_append(&builder, str_lit("morning"));
         assert(string_equal(builder_to_string(builder), str_lit("good morning")));
 
         builder.len = 0;
-        builder_print_fixed(&builder, "%d %s", 123, "red balloons");
+        builder_print(&builder, "%d %s", 123, "red balloons");
         assert(string_equal(builder_to_string(builder), str_lit("123 red balloons")));
 
-        builder_replace_fixed(&builder, str_lit("red"), str_lit("green"));
+        builder_replace(&builder, str_lit("red"), str_lit("green"));
         assert(string_equal(builder_to_string(builder), str_lit("123 green balloons")));
 
-        builder_replace_fixed(&builder, str_lit("red"), str_lit("yellow"));
+        builder_replace(&builder, str_lit("red"), str_lit("yellow"));
         assert(string_equal(builder_to_string(builder), str_lit("123 green balloons")));
     }
 
-    // builder_replace_fixed()
+    // builder_replace() with fixed-sized buffer
     {
         char char_buffer[4];
         StringBuilder builder = builder_from_fixed(char_buffer);
-        builder_append_fixed(&builder, str_lit("abc"));
-        assert(builder_replace_fixed(&builder, str_lit("b"), str_lit("def")) < 0);
+        builder_append(&builder, str_lit("abc"));
+        builder_replace(&builder, str_lit("b"), str_lit("def"));
+        assert(string_equal(builder_to_string(builder), str_lit("adefc")));
     }
 
-    // builder_splice_fixed()
+    // builder_splice() with fixed-sized buffer
     {
         char char_buffer[16];
         StringBuilder builder = builder_from_fixed(char_buffer);
-        builder_append_fixed(&builder, str_lit("abc"));
+        builder_append(&builder, str_lit("abc"));
 
-        builder_splice_fixed(&builder, 1, 2, str_lit("def"));
+        builder_splice(&builder, 1, 2, str_lit("def"));
         assert(string_equal(builder_to_string(builder), str_lit("adefc")));
 
-        builder_splice_fixed(&builder, -4, -1, str_lit("b"));
+        builder_splice(&builder, -4, -1, str_lit("b"));
         assert(string_equal(builder_to_string(builder), str_lit("abc")));
 
-        builder_splice_fixed(&builder, 1, 1, str_lit("def"));
+        builder_splice(&builder, 1, 1, str_lit("def"));
         assert(string_equal(builder_to_string(builder), str_lit("adefbc")));
 
-        assert(builder_splice_fixed(&builder, 1, 1, str_lit("abcdefghijklmnop")) < 0);
+        builder_splice(&builder, 1, 1, str_lit("abcdefghijklmnop"));
+        assert(string_equal(builder_to_string(builder), str_lit("aabcdefghijklmnopdefbc")));
     }
-
-    // TODO: test builder_getline_fixed()
-    // TODO: test builder_read_file_fixed()
 
     // TODO: do more random testing
     {
