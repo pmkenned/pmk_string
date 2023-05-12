@@ -164,26 +164,28 @@ can simply set the len field to 0:
     builder.len = 0;
     builder_print(&builder, "%s %d\n", "goodbyte", 456);
 
-TODO: _fixed functions were deleted; update the comments below
+In addition to the functions mentioned so far, there are functions for
+replacing substrings, splicing, reading lines of input from a stream and
+reading files.
+
+## Using Fixed-Size Buffers
 
 As previously mentioned, the buffer for a StringBuilder does not have to be
 dynamically allocated. It can be a fixed-sized buffer located on the stack,
-BSS, or data segment. To use a fixed-sized buffer, however, you must use the
-corresponding functions which all end with _fixed.
-
-These functions work the same as their dynamic counterparts except that if the
-buffer space is insufficient, they simply truncate and return an error.
+BSS, or data segment.
 
 Here is an example of how you would use a StringBuilder with a fixed-sized
 buffer:
 
     char buffer[1024];
     StringBuilder builder = builder_from_fixed(buffer);
-    builder_print_fixed(&builder, "%s %d\n", "hello", 123);
+    builder_print(&builder, "%s %d\n", "hello", 123);
 
-In addition to the functions mentioned so far, there are functions for
-replacing substrings, splicing, reading lines of input from a stream and
-reading files.
+If the fixed-size buffer ever reaches capacity, it will automatically be
+converted to a dynamically-allocated buffer.
+
+StringBuilder's with fixed-sized buffers can safely be passed to
+builder_destroy() which will merely set the length to 0.
 
 ## Error Handling
 
